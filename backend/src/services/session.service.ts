@@ -20,7 +20,7 @@ export async function createSession(data: CreateSessionData): Promise<Session> {
     name: data.name,
     sessionKey: generateSessionKey(),
     ownerId: data.ownerId,
-    status: "offline",
+    status: "online", // Default to online for demo
     metadata: {},
     bookmarks: [],
     createdAt: now,

@@ -11,12 +11,9 @@ import {
   assignSessionToUser,
   unassignSessionFromUser,
 } from "../services/session.service";
-import { authMiddleware } from "../middleware/auth.middleware";
 import { ObjectId } from "mongodb";
 
 export const userRoutes = new Elysia({ prefix: "/api/users" })
-  .use(authMiddleware)
-  
   // Get all users (admin only)
   .get("/", async ({ user, set }) => {
     if (!user || user.role !== "admin") {

@@ -6,6 +6,52 @@ import { authRoutes } from "./routes/auth";
 import { userRoutes } from "./routes/users";
 import { sessionRoutes } from "./routes/sessions";
 import { logRoutes } from "./routes/logs";
+import { verifyToken, findUserById } from "./services/auth.service";
+
+console.log("[App] Creating Elysia app...");
+
+// Auth derive function - SIMPLIFIED FOR TESTING
+const authDerive = async (ctx: { cookie?: any; request?: Request }) => {
+  console.log("[Auth derive] called!");
+  
+  let token: string | null = null;
+  
+  // Try cookie first
+  const cookieObj = ctx.cookie as any;
+  if (cookieObj?.access_token?.value) {
+    token = cookieObj.access_token.value;
+    console.log("[Auth derive] Token from cookie:", token?.substring(0, 30));
+  }
+  
+  // Try Authorization header
+  if (!token && ctx.request) {
+    const authHeader = ctx.request.headers.get("authorization");
+    if (authHeader?.startsWith("Bearer ")) {
+      token = authHeader.slice(7);
+      console.log("[Auth derive] Token from header");
+    }
+  }
+  
+  if (!token) {
+    console.log("[Auth derive] No token");
+    return { user: null, userId: null };
+  }
+  
+  const payload = await verifyToken(token);
+  
+  if (!payload || !payload.userId) {
+    console.log("[Auth derive] Invalid payload");
+    return { user: null, userId: null };
+  }
+  
+  const user = await findUserById(payload.userId);
+  console.log("[Auth derive] User:", user?.username);
+  
+  return { 
+    user, 
+    userId: user?._id?.toString() || null 
+  };
+};
 
 export function createApp() {
   return new Elysia()
@@ -15,6 +61,7 @@ export function createApp() {
       methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     }))
     .use(cookie())
+    .derive(authDerive) // Auth derive FIRST
     .use(swagger({
       documentation: {
         info: {

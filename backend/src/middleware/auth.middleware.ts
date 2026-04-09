@@ -1,55 +1,58 @@
-import { Elysia, t } from "elysia";
+import { Elysia } from "elysia";
 import { verifyToken, findUserById } from "../services/auth.service";
 import { User } from "../db/schemas";
 
-// Context type
+console.log("[Auth] Module loading...");
+
 export interface AuthContext {
   user: User | null;
   userId: string | null;
 }
 
+// Use onRequest + store to pass user to route handlers
 export const authMiddleware = new Elysia()
-  .derive(async ({ cookie }): Promise<AuthContext> => {
-    const token = cookie?.access_token?.value;
+  .state("auth.user", null as User | null)
+  .state("auth.userId", null as string | null)
+  .onRequest(async ({ cookie, request, store }) => {
+    let token: string | null = null;
+    
+    // Try cookie first
+    const cookieObj = cookie as Record<string, { value?: string } | undefined>;
+    if (cookieObj?.access_token?.value) {
+      token = cookieObj.access_token.value;
+    }
+    
+    // Try Authorization header as fallback
+    if (!token && request) {
+      const headersObj = request.headers;
+      const authHeader = headersObj.get("authorization") || headersObj.get("Authorization");
+      if (authHeader?.startsWith("Bearer ")) {
+        token = authHeader.slice(7);
+      }
+    }
     
     if (!token) {
-      return { user: null, userId: null };
+      return;
     }
     
     const payload = await verifyToken(token);
     
     if (!payload || !payload.userId) {
-      return { user: null, userId: null };
+      return;
     }
     
     const user = await findUserById(payload.userId);
     
-    return { user, userId: user?._id?.toString() || null };
+    (store as any).authUser = user;
+    (store as any).authUserId = user?._id?.toString() || null;
   });
 
-// Admin-only middleware - just returns, actual check done in routes
-export const adminMiddleware = new Elysia()
-  .use(authMiddleware)
-  .derive(({ user }) => {
-    return { isAdmin: user?.role === "admin" };
-  });
+// Helper to get user from store in route handlers
+export function getAuthUser(ctx: { store: any }): { user: User | null; userId: string | null } {
+  return {
+    user: ctx.store.authUser || null,
+    userId: ctx.store.authUserId || null,
+  };
+}
 
-// Optional auth - doesn't fail if no token
-export const optionalAuthMiddleware = new Elysia()
-  .derive(async ({ cookie }): Promise<AuthContext> => {
-    const token = cookie?.access_token?.value;
-    
-    if (!token) {
-      return { user: null, userId: null };
-    }
-    
-    const payload = await verifyToken(token);
-    
-    if (!payload || !payload.userId) {
-      return { user: null, userId: null };
-    }
-    
-    const user = await findUserById(payload.userId);
-    
-    return { user, userId: user?._id?.toString() || null };
-  });
+console.log("[Auth] Module loaded");

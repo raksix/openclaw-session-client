@@ -15,11 +15,8 @@ import {
   deleteMessage,
 } from "../services/message.service";
 import { getLogsBySessionId, createLog, deleteLogsBySessionId } from "../services/log.service";
-import { authMiddleware } from "../middleware/auth.middleware";
 
 export const sessionRoutes = new Elysia({ prefix: "/api/sessions" })
-  .use(authMiddleware)
-  
   // Get all accessible sessions
   .get("/", async ({ user, set }) => {
     if (!user) {

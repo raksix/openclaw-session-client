@@ -6,11 +6,7 @@ import {
   createRefreshToken,
   updateLastLogin,
 } from "../services/auth.service";
-import { authMiddleware } from "../middleware/auth.middleware";
-
 export const authRoutes = new Elysia({ prefix: "/api/auth" })
-  .use(authMiddleware)
-  
   // Login
   .post(
     "/login",

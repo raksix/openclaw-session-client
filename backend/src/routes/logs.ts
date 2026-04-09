@@ -1,11 +1,7 @@
 import { Elysia, t } from "elysia";
 import { createLog, getLogsBySessionId, getLogCount } from "../services/log.service";
 import { getSessionById } from "../services/session.service";
-import { authMiddleware } from "../middleware/auth.middleware";
-
 export const logRoutes = new Elysia({ prefix: "/api/logs" })
-  .use(authMiddleware)
-  
   // Create log entry
   .post(
     "/",

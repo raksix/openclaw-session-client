@@ -13,10 +13,7 @@ async function main() {
     // Create and start the app
     const app = createApp();
     
-    const server = app.listen({
-      hostname: HOST,
-      port: PORT,
-    });
+    const server = app.listen(PORT);
     
     console.log(`🚀 OpenClaw Session Manager Backend running at http://${HOST}:${PORT}`);
     console.log(`📚 API Documentation available at http://${HOST}:${PORT}/swagger`);
