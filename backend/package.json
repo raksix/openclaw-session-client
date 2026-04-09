@@ -9,16 +9,16 @@
     "seed": "bun run scripts/seed-admin.ts"
   },
   "dependencies": {
-    "elysia": "^1.0.0",
-    "@elysiajs/cors": "^1.0.0",
-    "@elysiajs/cookie": "^1.0.0",
-    "@elysiajs/swagger": "^1.0.0",
-    "@elysiajs/websocket": "^1.0.0",
-    "@sinclair/typebox": "^0.32.0",
-    "mongodb": "^6.6.0",
+    "@elysiajs/cookie": "^0.8.0",
+    "@elysiajs/cors": "^0.8.0",
+    "@elysiajs/swagger": "^0.8.0",
+    "@elysiajs/websocket": "^0.2.8",
+    "@sinclair/typebox": "0.34.15",
     "bcrypt": "^5.1.1",
-    "jsonwebtoken": "^9.0.2",
+    "elysia": "^1.0.0",
     "jose": "^5.3.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.6.0",
     "ws": "^8.17.0"
   },
   "devDependencies": {

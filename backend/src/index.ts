@@ -13,10 +13,13 @@ async function main() {
     // Create and start the app
     const app = createApp();
     
-    const server = app.listen(PORT, HOST, () => {
-      console.log(`🚀 OpenClaw Session Manager Backend running at http://${HOST}:${PORT}`);
-      console.log(`📚 API Documentation available at http://${HOST}:${PORT}/swagger`);
+    const server = app.listen({
+      hostname: HOST,
+      port: PORT,
     });
+    
+    console.log(`🚀 OpenClaw Session Manager Backend running at http://${HOST}:${PORT}`);
+    console.log(`📚 API Documentation available at http://${HOST}:${PORT}/swagger`);
     
     // Graceful shutdown
     const shutdown = async (signal: string) => {
