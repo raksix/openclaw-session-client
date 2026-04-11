@@ -6,6 +6,8 @@ import { authRoutes } from "./routes/auth";
 import { userRoutes } from "./routes/users";
 import { sessionRoutes } from "./routes/sessions";
 import { logRoutes } from "./routes/logs";
+import { chatRoutes } from "./routes/chat";
+import { wsRoutes } from "./routes/websocket";
 import { verifyToken, findUserById } from "./services/auth.service";
 
 console.log("[App] Creating Elysia app...");
@@ -82,6 +84,8 @@ export function createApp() {
     .use(userRoutes)
     .use(sessionRoutes)
     .use(logRoutes)
+    .use(chatRoutes)
+    .use(wsRoutes)
     .onError(({ code, error, set }) => {
       console.error(`[ERROR] ${code}:`, error);
       

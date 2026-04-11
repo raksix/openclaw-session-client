@@ -41,6 +41,10 @@ export default function SessionsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newSessionName, setNewSessionName] = useState("");
+  const [agentId] = useState("main");
+  const [channel] = useState("tui");
+  const [channelPeer] = useState(() => `user_${Math.random().toString(36).substring(2, 8)}`);
+  const [channelContext] = useState("direct");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -73,13 +77,20 @@ export default function SessionsPage() {
       const res = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newSessionName }),
+        body: JSON.stringify({
+          name: newSessionName || `Chat ${Date.now()}`,
+          agentId: "main",
+          channel: "tui",
+          channelPeer: `user_${Math.random().toString(36).substring(2, 8)}`,
+          channelContext: "direct",
+        }),
       });
 
       if (res.ok) {
         const session = await res.json();
         addSession(session);
         setNewSessionName("");
+        setChannelPeer("");
         setCreateDialogOpen(false);
         router.push(`/sessions/${session._id}`);
       }
@@ -248,18 +259,18 @@ export default function SessionsPage() {
       <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create New Session</DialogTitle>
+            <DialogTitle>New TUI Session</DialogTitle>
             <DialogDescription>
-              Enter a name for your new OpenClaw session.
+              Creating a new terminal session with a random peer ID...
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <Label htmlFor="session-name">Session Name</Label>
+            <Label htmlFor="session-name">Session Name (optional)</Label>
             <Input
               id="session-name"
               value={newSessionName}
               onChange={(e) => setNewSessionName(e.target.value)}
-              placeholder="My Agent Session"
+              placeholder="Auto-generated if empty"
               className="mt-2"
             />
           </div>
@@ -267,7 +278,7 @@ export default function SessionsPage() {
             <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreateSession} disabled={!newSessionName.trim()}>
+            <Button onClick={handleCreateSession}>
               Create
             </Button>
           </DialogFooter>

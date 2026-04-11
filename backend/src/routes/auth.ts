@@ -39,7 +39,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
-        maxAge: 15 * 60, // 15 minutes
+        maxAge: 365 * 24 * 60 * 60, // 365 days
         path: "/",
       });
       
@@ -48,7 +48,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax",
-        maxAge: 7 * 24 * 60 * 60, // 7 days
+        maxAge: 365 * 24 * 60 * 60, // 365 days
         path: "/",
       });
       
@@ -138,7 +138,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 15 * 60,
+      maxAge: 365 * 24 * 60 * 60, // 365 days
       path: "/",
     });
     
@@ -147,7 +147,7 @@ export const authRoutes = new Elysia({ prefix: "/api/auth" })
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
-      maxAge: 7 * 24 * 60 * 60,
+      maxAge: 365 * 24 * 60 * 60, // 365 days
       path: "/",
     });
     

@@ -9,6 +9,7 @@
     "seed": "bun run scripts/seed-admin.ts"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^0.18.2",
     "@elysiajs/cookie": "^0.8.0",
     "@elysiajs/cors": "^0.8.0",
     "@elysiajs/swagger": "^0.8.0",

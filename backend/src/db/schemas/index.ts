@@ -42,6 +42,11 @@ export interface Session {
   metadata: {
     agentType?: string;
     lastCommand?: string;
+    sessionKey?: string;
+    agentId?: string;
+    channel?: string;
+    channelPeer?: string;
+    channelContext?: string;
   };
   bookmarks: Bookmark[];
   createdAt: Date;
@@ -71,7 +76,7 @@ export interface Message {
 }
 
 // Log source
-export type LogSource = "backend" | "frontend" | "pm2";
+export type LogSource = "backend" | "frontend" | "pm2" | "gateway";
 
 // Log level
 export type LogLevel = "debug" | "info" | "warn" | "error";

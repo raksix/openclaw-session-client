@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ChevronLeft,
@@ -33,6 +33,16 @@ import { useAuthStore } from "@/stores/auth-store";
 import { formatRelativeTime, cn } from "@/lib/utils";
 import type { Message, LogEntry } from "@/types";
 
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:4002";
+
+interface StreamMessage {
+  type: "status" | "chunk" | "complete" | "error" | "pong";
+  content?: string;
+  sessionId?: string;
+  error?: string;
+  raw?: any;
+}
+
 export default function SessionDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -62,6 +72,8 @@ export default function SessionDetailPage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Find session from store or set from params
   useEffect(() => {
@@ -78,9 +90,10 @@ export default function SessionDetailPage() {
     const fetchMessages = async () => {
       try {
         const res = await fetch(`/api/sessions/${sessionId}/messages`);
+
         if (res.ok) {
           const data = await res.json();
-          setMessages(sessionId, data);
+          setMessages(sessionId, data.messages || []);
         }
       } catch (error) {
         console.error("Failed to fetch messages:", error);
@@ -90,9 +103,10 @@ export default function SessionDetailPage() {
     const fetchLogs = async () => {
       try {
         const res = await fetch(`/api/sessions/${sessionId}/logs`);
+
         if (res.ok) {
           const data = await res.json();
-          setLogs(sessionId, data);
+          setLogs(sessionId, data.logs || []);
         }
       } catch (error) {
         console.error("Failed to fetch logs:", error);
@@ -103,10 +117,108 @@ export default function SessionDetailPage() {
     fetchLogs();
   }, [sessionId, setMessages, setLogs]);
 
-  // Auto-scroll to bottom on new messages
+  // WebSocket connection for streaming
+  const connectWebSocket = useCallback(() => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
+
+    ws.onopen = () => {
+      console.log("[WS] Connected to stream server");
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const msg: StreamMessage = JSON.parse(event.data);
+        console.log("[WS] Message:", msg.type, msg.content?.substring(0, 50));
+
+        if (msg.type === "status") {
+          // Agent is starting
+          addLog(sessionId, {
+            _id: `log-${Date.now()}`,
+            sessionId,
+            level: "info",
+            message: "Agent başlatıldı...",
+            timestamp: new Date(),
+          });
+        } else if (msg.type === "chunk") {
+          // Streaming chunk received - could update UI in real-time
+        } else if (msg.type === "complete") {
+          // Final response received
+          const assistantMessage: Message = {
+            _id: `msg-${Date.now()}`,
+            sessionId,
+            userId: "assistant",
+            role: "assistant",
+            content: msg.content || "Yanıt alındı",
+            attachments: [],
+            createdAt: new Date(),
+          };
+          addMessage(sessionId, assistantMessage);
+          setIsLoading(false);
+
+          addLog(sessionId, {
+            _id: `log-${Date.now()}`,
+            sessionId,
+            level: "info",
+            message: `Yanıt tamamlandı (${msg.content?.length || 0} karakter)`,
+            timestamp: new Date(),
+          });
+        } else if (msg.type === "error") {
+          console.error("[WS] Error:", msg.error);
+          const errorMessage: Message = {
+            _id: `msg-${Date.now()}`,
+            sessionId,
+            userId: "assistant",
+            role: "assistant",
+            content: `Hata: ${msg.error}`,
+            attachments: [],
+            createdAt: new Date(),
+          };
+          addMessage(sessionId, errorMessage);
+          setIsLoading(false);
+
+          addLog(sessionId, {
+            _id: `log-${Date.now()}`,
+            sessionId,
+            level: "error",
+            message: msg.error || "Bilinmeyen hata",
+            timestamp: new Date(),
+          });
+        }
+      } catch (e) {
+        console.error("[WS] Parse error:", e);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log("[WS] Disconnected");
+      wsRef.current = null;
+      // Reconnect after 3 seconds
+      reconnectTimeoutRef.current = setTimeout(() => {
+        connectWebSocket();
+      }, 3000);
+    };
+
+    ws.onerror = (error) => {
+      console.error("[WS] Error:", error);
+    };
+  }, [sessionId, addMessage, addLog]);
+
+  // Connect WebSocket on mount
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages[sessionId]]);
+    connectWebSocket();
+
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [connectWebSocket]);
 
   const handleSendMessage = async () => {
     if (!inputValue.trim() || !sessionId) return;
@@ -125,21 +237,36 @@ export default function SessionDetailPage() {
     setInputValue("");
     setIsLoading(true);
 
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: inputValue }),
-      });
+    // Send via WebSocket for streaming
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: "chat",
+        sessionId,
+        message: inputValue,
+        agentId: "main"
+      }));
 
-      if (res.ok) {
-        const assistantMessage = await res.json();
-        addMessage(sessionId, assistantMessage);
-      }
-    } catch (error) {
-      console.error("Failed to send message:", error);
-    } finally {
+      addLog(sessionId, {
+        _id: `log-${Date.now()}`,
+        sessionId,
+        level: "info",
+        message: `Mesaj gönderildi: ${inputValue.substring(0, 50)}...`,
+        timestamp: new Date(),
+      });
+    } else {
+      console.error("[WS] WebSocket not connected");
       setIsLoading(false);
+      
+      const errorMessage: Message = {
+        _id: `msg-${Date.now()}`,
+        sessionId,
+        userId: "assistant",
+        role: "assistant",
+        content: "Bağlantı hatası: WebSocket sunucusuna bağlanılamadı",
+        attachments: [],
+        createdAt: new Date(),
+      };
+      addMessage(sessionId, errorMessage);
     }
   };
 
@@ -164,103 +291,174 @@ export default function SessionDetailPage() {
       });
 
       if (res.ok) {
-        setBookmarkDialogOpen(false);
+        setIframeUrl("");
         setBookmarkTitle("");
+        setBookmarkDialogOpen(false);
       }
     } catch (error) {
       console.error("Failed to save bookmark:", error);
     }
   };
 
-  const sessionMessages = messages[sessionId] || [];
-  const sessionLogs = logs[sessionId] || [];
+  const handleDeleteMessage = async (messageId: string) => {
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/messages/${messageId}`, {
+        method: "DELETE",
+      });
 
-  if (!activeSession) {
+      if (res.ok) {
+        setMessages(
+          sessionId,
+          sessionMessages.filter((m) => m._id !== messageId)
+        );
+      }
+    } catch (error) {
+      console.error("Failed to delete message:", error);
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (!sessionId || !confirm("Tüm sohbet temizlenecek. Emin misin?")) return;
+
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/clear`, {
+        method: "POST",
+      });
+
+      if (res.ok) {
+        setMessages(sessionId, []);
+        clearLogs(sessionId);
+      }
+    } catch (error) {
+      console.error("Failed to clear chat:", error);
+    }
+  };
+
+  const handleDeleteSession = async () => {
+    if (!sessionId || !confirm("Bu oturum silinecek. Emin misin?")) return;
+
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}`, {
+        method: "DELETE",
+      });
+
+      if (res.ok) {
+        router.push("/sessions");
+      }
+    } catch (error) {
+      console.error("Failed to delete session:", error);
+    }
+  };
+
+  // Get messages for this session
+  const sessionMessages = messages[sessionId] || [];
+
+  // Group messages by date
+  const groupedMessages = sessionMessages.reduce((groups, message) => {
+    const date = new Date(message.createdAt).toLocaleDateString("tr-TR");
+    if (!groups[date]) {
+      groups[date] = [];
+    }
+    groups[date].push(message);
+    return groups;
+  }, {} as Record<string, Message[]>);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [sessionMessages]);
+
+  if (!activeSession && sessions.length === 0) {
     return (
-      <div className="h-[calc(100vh-3.5rem)] flex items-center justify-center">
-        <p className="text-muted-foreground">Session not found</p>
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <h2 className="text-xl font-semibold mb-2">Oturum Yükleniyor...</h2>
+          <p className="text-muted-foreground">Lütfen bekleyin</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="h-[calc(100vh-3.5rem)] flex flex-col">
-      {/* Session Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b bg-card">
-        <div className="flex items-center gap-3">
+    <div className="flex flex-col h-full bg-background">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b">
+        <div className="flex items-center gap-2">
           <Button
             variant="ghost"
             size="icon"
             onClick={() => router.push("/sessions")}
           >
-            <ChevronLeft className="h-5 w-5" />
+            <ChevronLeft className="h-4 w-4" />
           </Button>
           <div>
-            <h2 className="font-semibold">{activeSession.name}</h2>
-            <div className="flex items-center gap-2">
-              <div
-                className={cn(
-                  "h-2 w-2 rounded-full",
-                  activeSession.status === "online" && "bg-green-500",
-                  activeSession.status === "idle" && "bg-yellow-500",
-                  activeSession.status === "offline" && "bg-gray-500",
-                  activeSession.status === "error" && "bg-red-500"
-                )}
-              />
-              <span className="text-xs text-muted-foreground capitalize">
-                {activeSession.status}
-              </span>
-            </div>
+            <h1 className="font-semibold">
+              {activeSession?.name || "Yeni Oturum"}
+            </h1>
+            {activeSession?.description && (
+              <p className="text-sm text-muted-foreground">
+                {activeSession.description}
+              </p>
+            )}
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "chat" | "iframe")}>
-            <TabsList>
-              <TabsTrigger value="chat" className="gap-1">
-                <FileText className="h-3.5 w-3.5" />
-                Chat
-              </TabsTrigger>
-              <TabsTrigger value="iframe" className="gap-1">
-                <Globe className="h-3.5 w-3.5" />
-                Web View
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleLogPanel}
-            className={cn(logPanelOpen && "bg-accent")}
-          >
-            <FileText className="h-4 w-4" />
+          <Badge variant="outline">
+            {activeSession?.model || "MiniMax-M2.7"}
+          </Badge>
+          <Button variant="outline" size="sm" onClick={toggleLogPanel}>
+            {logPanelOpen ? (
+              <ChevronUp className="h-4 w-4 mr-1" />
+            ) : (
+              <ChevronDown className="h-4 w-4 mr-1" />
+            )}
+            Loglar
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleClearChat}>
+            <Trash2 className="h-4 w-4 mr-1" />
+            Temizle
+          </Button>
+          <Button variant="outline" size="sm" onClick={handleDeleteSession}>
+            <Trash2 className="h-4 w-4" />
           </Button>
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex overflow-hidden">
-        {/* Chat / iframe Area */}
-        <div className="flex-1 flex flex-col">
-          <Tabs value={activeTab} className="flex-1 flex flex-col">
-            <TabsContent value="chat" className="flex-1 flex flex-col m-0 p-0">
-              {/* Messages Area */}
-              <ScrollArea className="flex-1 p-4" ref={chatContainerRef}>
-                <div className="space-y-4 max-w-4xl mx-auto">
-                  {sessionMessages.length === 0 ? (
-                    <div className="text-center py-12">
-                      <p className="text-muted-foreground">
-                        No messages yet. Start a conversation!
-                      </p>
+      {/* Main Content */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Chat Area */}
+        <div
+          ref={chatContainerRef}
+          className="flex-1 flex flex-col overflow-hidden"
+        >
+          <Tabs
+            value={activeTab}
+            onValueChange={setActiveTab}
+            className="flex-1 flex flex-col"
+          >
+            <TabsList className="border-b rounded-none bg-transparent h-12 px-4">
+              <TabsTrigger value="chat">Sohbet</TabsTrigger>
+              <TabsTrigger value="files">Dosyalar</TabsTrigger>
+              <TabsTrigger value="bookmarks">Yer İşaretleri</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="chat" className="flex-1 flex flex-col m-0">
+              {/* Messages */}
+              <ScrollArea className="flex-1 px-4 py-4">
+                {Object.entries(groupedMessages).map(([date, msgs]) => (
+                  <div key={date}>
+                    <div className="text-center text-xs text-muted-foreground py-2">
+                      {date}
                     </div>
-                  ) : (
-                    sessionMessages.map((message) => (
+                    {msgs.map((message) => (
                       <div
                         key={message._id}
                         className={cn(
-                          "flex",
-                          message.role === "user" ? "justify-end" : "justify-start"
+                          "flex mb-4",
+                          message.role === "user"
+                            ? "justify-end"
+                            : "justify-start"
                         )}
                       >
                         <div
@@ -271,204 +469,129 @@ export default function SessionDetailPage() {
                               : "bg-muted"
                           )}
                         >
-                          <p className="text-sm whitespace-pre-wrap">
-                            {message.content}
-                          </p>
-                          <span
-                            className={cn(
-                              "text-xs mt-1 block",
-                              message.role === "user"
-                                ? "text-primary-foreground/70"
-                                : "text-muted-foreground"
+                          <p className="whitespace-pre-wrap">{message.content}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-xs opacity-70">
+                              {formatRelativeTime(new Date(message.createdAt))}
+                            </span>
+                            {message.role === "user" && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6"
+                                onClick={() => handleDeleteMessage(message._id)}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
                             )}
-                          >
-                            {formatRelativeTime(message.createdAt)}
-                          </span>
+                          </div>
                         </div>
                       </div>
-                    ))
-                  )}
-                  {isLoading && (
-                    <div className="flex justify-start">
-                      <div className="bg-muted rounded-lg px-4 py-2">
-                        <div className="flex gap-1">
-                          <div className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce" />
-                          <div className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0.1s]" />
-                          <div className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce [animation-delay:0.2s]" />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  <div ref={messagesEndRef} />
-                </div>
+                    ))}
+                    <div ref={messagesEndRef} />
+                  </div>
+                ))}
               </ScrollArea>
 
               {/* Input Area */}
-              <div className="p-4 border-t bg-card">
-                <div className="flex gap-2 max-w-4xl mx-auto">
+              <div className="border-t p-4">
+                <div className="flex gap-2">
                   <Input
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="Type a message..."
-                    disabled={activeSession.status === "offline"}
+                    placeholder="Mesajınızı yazın..."
+                    disabled={isLoading}
                     className="flex-1"
                   />
                   <Button
                     onClick={handleSendMessage}
-                    disabled={!inputValue.trim() || isLoading}
+                    disabled={isLoading || !inputValue.trim()}
+                    size="icon"
                   >
-                    <Send className="h-4 w-4" />
+                    {isLoading ? (
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
                   </Button>
                 </div>
               </div>
             </TabsContent>
 
-            <TabsContent value="iframe" className="flex-1 flex flex-col m-0 p-0">
-              {/* URL Bar */}
-              <div className="flex items-center gap-2 p-2 border-b bg-card">
-                <Input
-                  value={iframeUrl}
-                  onChange={(e) => setIframeUrl(e.target.value)}
-                  placeholder="Enter URL..."
-                  className="flex-1"
-                />
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => iframeUrl && window.open(iframeUrl, "_blank")}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => {
-                    setBookmarkDialogOpen(true);
-                    setBookmarkTitle(iframeUrl);
-                  }}
-                  disabled={!iframeUrl}
-                >
-                  <Bookmark className="h-4 w-4" />
-                </Button>
-                <Button variant="outline" size="icon">
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
+            <TabsContent value="files" className="flex-1 p-4">
+              <div className="text-center text-muted-foreground">
+                <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                <p>Dosya listesi yakında eklenecek</p>
               </div>
+            </TabsContent>
 
-              {/* iframe Content */}
-              <div className="flex-1 bg-white">
-                {iframeUrl ? (
-                  <iframe
-                    src={iframeUrl}
-                    className="w-full h-full border-0"
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            <TabsContent value="bookmarks" className="flex-1 p-4">
+              <div className="space-y-4">
+                <div className="flex gap-2">
+                  <Input
+                    value={iframeUrl}
+                    onChange={(e) => setIframeUrl(e.target.value)}
+                    placeholder="URL girin"
                   />
-                ) : (
-                  <div className="h-full flex items-center justify-center text-muted-foreground">
-                    Enter a URL to browse
-                  </div>
-                )}
-              </div>
-
-              {/* Bookmarks Dropdown */}
-              {activeSession.bookmarks?.length > 0 && (
-                <div className="p-2 border-t bg-card">
-                  <Select
-                    onValueChange={(v) => setIframeUrl(v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Bookmarks" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {activeSession.bookmarks.map((bm) => (
-                        <SelectItem key={bm._id} value={bm.url}>
-                          {bm.title}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Button onClick={() => setBookmarkDialogOpen(true)}>
+                    <Bookmark className="h-4 w-4 mr-1" />
+                    Kaydet
+                  </Button>
                 </div>
-              )}
+                {activeSession?.bookmarks?.map((bookmark) => (
+                  <div
+                    key={bookmark._id}
+                    className="flex items-center justify-between p-2 border rounded"
+                  >
+                    <div>
+                      <p className="font-medium">{bookmark.title}</p>
+                      <a
+                        href={bookmark.url}
+                        target="_blank"
+                        className="text-sm text-muted-foreground hover:underline"
+                      >
+                        {bookmark.url}
+                      </a>
+                    </div>
+                    <Button variant="ghost" size="icon">
+                      <ExternalLink className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </TabsContent>
           </Tabs>
         </div>
 
-        {/* Log Panel (Right Sidebar) */}
+        {/* Log Panel */}
         {logPanelOpen && (
-          <div className="w-80 border-l bg-card flex flex-col">
-            <div className="flex items-center justify-between px-4 py-2 border-b">
-              <h3 className="font-semibold text-sm">Logs</h3>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => clearLogs(sessionId)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={toggleLogPanel}
-                >
-                  <ChevronUp className="h-3.5 w-3.5" />
-                </Button>
+          <>
+            <Separator orientation="vertical" />
+            <div className="w-80 flex flex-col border-l">
+              <div className="p-2 border-b">
+                <h3 className="font-semibold">Loglar</h3>
               </div>
+              <ScrollArea className="flex-1 p-2">
+                {logs.map((log) => (
+                  <div
+                    key={log._id}
+                    className={cn(
+                      "text-xs p-1 mb-1 rounded",
+                      log.level === "error" && "bg-destructive/10 text-destructive",
+                      log.level === "warning" && "bg-yellow-500/10 text-yellow-600",
+                      log.level === "info" && "bg-primary/10"
+                    )}
+                  >
+                    <span className="opacity-70">
+                      {formatRelativeTime(new Date(log.timestamp))}
+                    </span>{" "}
+                    {log.message}
+                  </div>
+                ))}
+              </ScrollArea>
             </div>
-
-            <ScrollArea className="flex-1">
-              <div className="p-2 space-y-1">
-                {sessionLogs.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-4">
-                    No logs yet
-                  </p>
-                ) : (
-                  sessionLogs.map((log) => (
-                    <div
-                      key={log._id}
-                      className="p-2 rounded bg-background/50 text-xs font-mono"
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                        <Badge
-                          variant={
-                            log.level === "error"
-                              ? "error"
-                              : log.level === "warn"
-                              ? "warning"
-                              : "secondary"
-                          }
-                          className="text-[10px] px-1"
-                        >
-                          {log.source}
-                        </Badge>
-                        <Badge
-                          variant={
-                            log.level === "error"
-                              ? "error"
-                              : log.level === "warn"
-                              ? "warning"
-                              : log.level === "info"
-                              ? "default"
-                              : "secondary"
-                          }
-                          className="text-[10px] px-1"
-                        >
-                          {log.level}
-                        </Badge>
-                        <span className="text-muted-foreground">
-                          {formatRelativeTime(log.createdAt)}
-                        </span>
-                      </div>
-                      <p className="text-foreground/80 break-all">{log.message}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </ScrollArea>
-          </div>
+          </>
         )}
       </div>
     </div>
